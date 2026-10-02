@@ -153,4 +153,72 @@ scheduled task. Cycles below are from that live run (afternoon of
 
 ---
 
+## Cycle 2 -- 2026-10-02 (live run)
+
+**Game:** Ondsel=White, node budget 134638, sf-depth 13, sf-multipv 3
+    (first attempt at sf-depth 10 reproduced cycle 0's exact game --
+    engine is fully deterministic with no RNG, so varying Stockfish's
+    search depth was needed to actually get a different game),
+    tools/devloop/work/cycle_2 (gitignored test output)
+**Divergence found:** ply 28 (White to move), delta 109cp (white-relative:
+    Ondsel -10, Stockfish -119). Position after a long forced sequence
+    where White's king had to manually walk e1-f1-g1 (losing castling
+    rights) and a bishop-for-knight trade happened on d2, followed by a
+    pawn trade on d4 that let Black's knight recapture onto d4 -- a square
+    no White pawn can ever challenge again (c- and e-pawns already past
+    it). Material was dead equal. Ondsel's move (Qd1, retreating the
+    attacked queen) was Stockfish's own #1 choice both at shallow and
+    5,000,000-node depth -- once again the MOVE was fine, only the
+    judgement of the resulting position was off.
+**Diagnosis:** eval blind spot (confirmed via replay_position at
+    5,000,000 nodes: eval stuck at -10 vs Stockfish's steady -116/-119
+    across depths 12-15).
+**Idea:** Checked by hand first (no code) whether king safety (pawn
+    shield intact for both kings -- yes, both fully intact, no holes) or
+    raw space counting would explain this -- neither does. What stood out
+    concretely: Black's knight on d4 is a textbook "outpost" (no enemy
+    pawn can ever attack it again). Implemented eval_outpost_enabled
+    (default off) + outpost_score() in eval.c: a knight gets +25cp if (a)
+    no enemy pawn on an adjacent file can still reach a rank where it
+    would attack the knight's square (reusing the existing
+    passed_pawn_mask machinery from endgame_heuristics_score, restricted
+    to the two adjacent files only), and (b) the knight is currently
+    defended by one of its own pawns. This is the standard chess-
+    programming "knight outpost" pattern, general across any position
+    with a similarly-placed knight, not tuned to this one game.
+**Position re-test result:** Static-eval-only probe: -25cp at this exact
+    position (baseline +30 -> +5 with the term on), a real and
+    correctly-signed chunk of the ~109-149cp gap (roughly 20-25% of it).
+    Full search at the real 134638 node budget: eval moved from -10 to
+    -35 (White-relative), narrowing the gap to Stockfish's -92 (at SF
+    depth 12) by close to half. Move choice unchanged (still matched SF's
+    best). This was clearly the most promising single-position result of
+    any idea tried so far -- strong enough to justify the full regression
+    match.
+**Regression match result:** `MATCH_RESULT current_wins=14 baseline_wins=18
+    draws=8 adjudicated=0 total=40` (20 openings x 2 colors, seed 314159,
+    real 134638 node budget). FAILS the gate (14 < 18) -- current is a net
+    loser overall despite the clear, measured local improvement at the
+    position that motivated it.
+**Outcome:** REVERTED (`git checkout -- src/engine/`). This is exactly the
+    scenario the regression-gate step exists for: a change that looks
+    good at the one position that inspired it can still make the engine
+    WORSE overall once it's actually played out across many different
+    positions and openings. Possible reasons worth a future cycle's
+    attention (not pursued further this cycle, to stay within one
+    idea/one test per cycle): OUTPOST_BONUS=25 may simply be too large a
+    flat bonus relative to how reliably "no pawn can ever attack this
+    square" actually predicts real strength across a whole game (e.g. it
+    might be encouraging the search to steer toward unrelated,
+    objectively worse positions purely to plant a knight on *some*
+    outpost square, trading away real activity/safety for the bonus); or
+    the knights-only restriction interacts oddly with this engine's
+    specific move-ordering/pruning in ways a static-eval-only probe can't
+    see. A smaller weight (e.g. 10-12) or requiring the outpost to also be
+    on a central file might be worth trying in a later cycle, but as a
+    FRESH idea with its own position+regression test, not a tweak forced
+    through on this result.
+
+---
+
 (Entries continue below.)
