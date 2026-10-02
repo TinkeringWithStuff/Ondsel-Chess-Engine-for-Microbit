@@ -94,7 +94,7 @@ static Bitboard attacked_squares(const Board *b, int color) {
 //      deliberately colorblind here: the geometry is identical for either
 //      side, only which side benefits changes.
 // ---------------------------------------------------------------------------
-int eval_endgame_heuristics_enabled = 0;
+int eval_endgame_heuristics_enabled = 1;
 
 // Precomputed once: passed_pawn_mask[color][sq] is every square, on the
 // files immediately adjacent to and including `sq`'s own file, that lies

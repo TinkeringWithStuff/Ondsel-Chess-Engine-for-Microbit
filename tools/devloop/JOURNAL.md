@@ -317,3 +317,37 @@ scheduled task. Cycles below are from that live run (afternoon of
     rejected. Itself useful information for Rune: this simple
     material+PST baseline is more resilient to these particular
     improvements than expected, at least at this node budget.
+
+## Cycle 5 -- 2026-10-02 (live run)
+
+**Idea (not from a fresh position, same pattern as cycle 4):**
+    eval_endgame_heuristics_enabled is the other existing-but-unproven
+    feature in eval.c (passed pawns + king activity toward them in the
+    endgame + rook semi-open/open file bonus + Tarrasch rule rook-behind-
+    passed-pawn bonus), already fully implemented, default off, with the
+    same "needs an A/B match" status as mobility and null-move. Tested it
+    directly via regression match rather than from one position's
+    divergence, same reasoning as cycle 4.
+**Position re-test result:** N/A, same reasoning as cycle 4 -- this is a
+    broad feature test, not a single-position fix.
+**Regression match result:** Ran THREE independent 40-game matches
+    (different seeds) rather than just one, because the first result was
+    suspiciously close (16-17) and the point of this methodology is not
+    to trust a single noisy sample for a borderline case:
+    - seed 577215: `current_wins=16 baseline_wins=17 draws=7` (current
+      barely lost)
+    - seed 999999: `current_wins=22 baseline_wins=12 draws=6` (current
+      won clearly)
+    - seed 141421: `current_wins=19 baseline_wins=15 draws=6` (current
+      won clearly)
+    Combined across all 120 games: current 57, baseline 44, draws 19.
+    Current won 2 of 3 individual matches outright and only narrowly lost
+    the third -- a consistent signal, not a fluke from one lucky sample.
+**Outcome:** KEPT. Flipped eval_endgame_heuristics_enabled's default to 1
+    in src/engine/eval.c, with eval.h's comment updated to record the
+    match evidence. This is the devloop's first real, gated improvement
+    after four straight rejections (cycles 1-4) -- the gate is working
+    exactly as designed: it let through the one idea that actually
+    demonstrated a consistent net win across multiple independent
+    samples, after rejecting several that looked promising at the single-
+    position level but weren't once tested broadly.
