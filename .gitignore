@@ -1,0 +1,10 @@
+build/
+*.o
+*.elf
+*.hex
+*.map
+tools/build_opening_book
+tools/pc_viewer/__pycache__/
+tools/pc_viewer/*.pyc
+tools/devloop/work/
+*.pgn
