@@ -45,6 +45,13 @@
 #define MAX_PLIES 300
 
 static long long g_node_budget_target;
+// Both default to OFF, matching the plain apples-to-apples eval-only
+// comparison this tool was originally written for. Set via
+// --current-null-move / --baseline-null-move (see main()) to also A/B a
+// SEARCH feature (e.g. null-move pruning) instead of an eval change --
+// see RUNBOOK.md / JOURNAL.md cycle 4 for why this was added.
+static int g_current_null_move = 0;
+static int g_baseline_null_move = 0;
 static int current_node_budget_reached(void) { return debug_node_count >= g_node_budget_target; }
 static int old_node_budget_reached(void) { return old_debug_node_count >= g_node_budget_target; }
 
@@ -277,12 +284,12 @@ static int play_game(int n_opening_plies, unsigned long long opening_seed, bool 
 
         Move m;
         if (use_current) {
-            null_move_enabled = 0;
+            null_move_enabled = g_current_null_move;
             g_node_budget_target = node_budget;
             debug_node_count = 0;
             m = find_best_move_timed(&b, MAX_SEARCH_DEPTH, current_node_budget_reached);
         } else {
-            old_null_move_enabled = 0;
+            old_null_move_enabled = g_baseline_null_move;
             g_node_budget_target = node_budget;
             old_debug_node_count = 0;
             m = old_find_best_move_timed(&b, MAX_SEARCH_DEPTH, old_node_budget_reached);
@@ -353,6 +360,8 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--node-budget") == 0 && i + 1 < argc) node_budget = atoll(argv[++i]);
         else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) seed = strtoull(argv[++i], NULL, 10);
         else if (strcmp(argv[i], "--opening-plies") == 0 && i + 1 < argc) opening_plies = atoi(argv[++i]);
+        else if (strcmp(argv[i], "--current-null-move") == 0) g_current_null_move = 1;
+        else if (strcmp(argv[i], "--baseline-null-move") == 0) g_baseline_null_move = 1;
         else if (strcmp(argv[i], "--out") == 0 && i + 1 < argc) out_pgn_path = argv[++i];
         else { fprintf(stderr, "unknown arg: %s\n", argv[i]); return 2; }
     }

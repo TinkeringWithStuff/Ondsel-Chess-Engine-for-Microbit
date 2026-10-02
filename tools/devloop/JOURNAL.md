@@ -278,3 +278,42 @@ scheduled task. Cycles below are from that live run (afternoon of
     that it should make the EXISTING eval's judgement available at
     greater effective depth, for free, rather than changing what counts
     as "good" in any position.
+
+    Tooling note: match_regression.c previously forced null_move_enabled
+    OFF for both sides unconditionally (an apples-to-apples eval-only
+    comparison). Added two new flags, default off (so existing behavior
+    is unchanged when neither is passed): `--current-null-move` and
+    `--baseline-null-move`, letting either engine's null-move setting be
+    turned on independently for exactly this kind of SEARCH-feature A/B
+    test. This is a tooling capability, not an experimental engine
+    change, so it's kept regardless of this cycle's result.
+**Position re-test result:** N/A -- this cycle tests a global search
+    behavior across many games/positions rather than one specific
+    position's eval gap, so step 3/5 (diagnose and re-test at one
+    position) doesn't apply the same way; went straight to the
+    regression match, which is the right test for "does this search
+    technique help overall."
+**Regression match result:** `MATCH_RESULT current_wins=10 baseline_wins=15
+    draws=15 adjudicated=0 total=40` (current with null-move pruning ON,
+    baseline with it off, 20 openings x 2 colors, seed 161803, real node
+    budget). FAILS the gate (10 < 15). Notably far more draws than any
+    previous match in this session (15 vs. 8 in cycles 2 and 3) --
+    null-move pruning seems to be steering the engine toward more
+    passive/drawish lines rather than clearly stronger ones, at least at
+    this engine's current node budget and depth ceiling.
+**Outcome:** REVERTED the engine-behavior test (null_move_enabled stays
+    off by default; no src/engine changes were made or needed this cycle
+    since the test used the new CLI flags, not a code change). KEPT the
+    match_regression.c tooling addition (committed as a capability, not
+    an experiment). Plausible explanation: null-move pruning's safety
+    assumptions (the "null move observation" -- if even passing a turn
+    still looks fine, the position is probably fine) can misfire in the
+    kind of tactically sharp lines a 134638-node-budget engine reaches
+    (shallower effective search depth than null-move pruning is usually
+    tuned for), and/or this implementation's reduction depth/margins need
+    their own tuning pass before it's a net win -- neither is a one-cycle
+    fix. Four cycles in a row have now failed the gate (space, mobility,
+    two outpost variants, null-move) -- all honestly tested, all honestly
+    rejected. Itself useful information for Rune: this simple
+    material+PST baseline is more resilient to these particular
+    improvements than expected, at least at this node budget.
