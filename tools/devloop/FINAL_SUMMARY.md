@@ -112,27 +112,66 @@ da56188 Log manual pipeline-validation cycle in devloop journal
 Working tree is clean; `tools/devloop/test_analysis.py` still passes
 (9/9).
 
+## Correction, later the same afternoon: null-move pruning
+
+Rune read cycle 4's rejection above and pushed back, correctly: "I seem to
+remember null-move gave significant improvements on the real hardware."
+That was worth investigating rather than taking the earlier conclusion at
+face value, and the investigation found a real problem with cycle 4's
+methodology (see `JOURNAL.md`'s "Cycle 4 correction" entry for the full
+story). In short:
+
+- `match_regression.c`'s opening selector (`random_opening()`) picked
+  uniformly-random *legal* moves from the start position, which can and
+  does produce bizarre positions no real game would reach. That's what
+  cycle 4 (and cycles 1-3) actually tested.
+- Old project artifacts in `/tmp/searchtest2`, from before this devloop
+  session, showed a real, reproducible, decisively positive result for
+  null-move pruning using REAL opening-book lines (47-28-27, confirmed
+  again at 70-41-41 across two reproduced seeds) -- Rune's memory was
+  right about something real.
+- `match_regression.c` now supports real opening-book lines (`--book`,
+  reusing this project's own SAN-parsing code from earlier search-testing
+  work). Re-run under the corrected methodology, three independent
+  40-game samples against today's actual baseline came back 55 wins / 43
+  losses / 22 draws for null-move ON -- a real, keepable edge, by the
+  same two-out-of-three-plus-tie bar cycle 5 used, but noticeably smaller
+  than the old project's result. Most likely explanation: the old test
+  was against a different, older snapshot of the engine, not an
+  apples-to-apples toggle on today's code.
+- **`null_move_enabled` is now `1` by default** in `src/engine/search.c`,
+  overturning cycle 4's rejection above.
+- Cycles 1-3's rejections (the space term, both knight-outpost variants)
+  used the same flawed random-opening methodology and were NOT re-tested
+  with the fixed harness. They should be considered **unverified**, not
+  confirmed negatives -- worth a second look before trusting either way.
+
 ## What Rune should do next
 
-1. **This has not been verified on the real micro:bit yet.** Everything
-   in this session was a HOST build of the engine only (no ARM cross-
-   compiler is available in this sandbox). The one kept change
-   (`eval_endgame_heuristics_enabled = 1`) needs to go through the real
-   device build-and-flash process and get checked on actual hardware
-   before it's trusted for real play -- it's a pure evaluation-function
-   change (no new memory allocation, no new data structures), so it
-   should build and fit the same way the existing code already does, but
-   that's an assumption, not something this session confirmed.
+1. **Neither kept change has been verified on the real micro:bit yet.**
+   Everything in this session was a HOST build of the engine only (no ARM
+   cross-compiler is available in this sandbox). Both
+   `eval_endgame_heuristics_enabled = 1` and `null_move_enabled = 1` need
+   to go through the real device build-and-flash process and get checked
+   on actual hardware before they're trusted for real play. The endgame
+   heuristics are a pure evaluation-function change (no new memory
+   allocation, no new data structures), so it should build and fit the
+   same way the existing code already does -- that's an assumption, not
+   something this session confirmed. Null-move pruning does add a little
+   search-side state (it needs to make/unmake a "pass" move), so it's
+   worth double-checking it doesn't trip anything time- or memory-
+   sensitive on the real hardware specifically.
 2. **The recurring space/cramped-position blind spot** (see above) is
    the most promising lead for a future session -- it showed up
    independently three times, which is a much stronger signal than any
    single divergence, but needs a smarter implementation than what was
    tried here.
-3. **Null-move pruning's draw-heavy result** is worth a second look with
-   its own dedicated investigation (tuning the reduction depth/margin, or
-   testing at a different node budget) rather than writing it off
-   entirely from one test -- the devloop treated it as "tried once at
-   current settings, rejected," not "proven impossible."
+3. **Cycles 1-3's rejections (space, both outpost variants) are
+   unverified, not confirmed**, now that cycle 4's rejection turned out to
+   be a methodology artifact (see the correction section above). They used
+   the same flawed random-opening regression harness. Worth re-testing
+   with `match_regression.c --book tools/devloop/openingbook/...` before
+   trusting either the original rejections or any revival of those ideas.
 4. If you want another devloop run, the infrastructure is all still
    here and working (`tools/devloop/RUNBOOK.md`, `JOURNAL.md`,
    `play_vs_stockfish`/`replay_position`/`run_regression.sh`) -- just make

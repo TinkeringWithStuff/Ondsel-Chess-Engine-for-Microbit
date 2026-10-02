@@ -351,3 +351,77 @@ scheduled task. Cycles below are from that live run (afternoon of
     demonstrated a consistent net win across multiple independent
     samples, after rejecting several that looked promising at the single-
     position level but weren't once tested broadly.
+
+## Cycle 4 correction -- 2026-10-02 (same day, later that afternoon)
+
+**Trigger:** Rune read the cycle-4 rejection above and pushed back: "I seem
+    to remember null-move gave significant improvements on the real
+    hardware... can you check this or is it no longer part of your
+    memory?" That's a direct, specific challenge to a conclusion already
+    logged as final, so it got investigated rather than taken at face
+    value or dismissed.
+**Investigation:** Found `/tmp/searchtest2`, leftover artifacts from this
+    project's earlier (pre-devloop, Sept 28-29) search-testing work,
+    including a saved 102-game PGN (`nullmove_match_book_102complete.pgn`)
+    and the binary that produced it (`match_nullmove_book_fixed`), both
+    using REAL opening-book lines (`8moves_v3_movesonly.txt`, 34,700 real
+    openings) rather than random legal moves. Re-ran that binary with its
+    original seed/count and got an EXACT bit-for-bit reproduction of the
+    saved PGN's 47-28-27 result (confirming it's real and deterministic,
+    not a fluke or a bug-era artifact -- checked file timestamps too, to
+    rule out a known buffer-overflow bug predating a fix). A second seed on
+    the same old binary also favored null-move clearly (23-13-14). Strong
+    evidence Rune's memory was correct about *something* real.
+**Root cause found:** `match_regression.c`'s `random_opening()` -- used by
+    every cycle this session, including cycle 4's rejection above --
+    chooses uniformly-random *legal* moves from the start position. That
+    can and does produce bizarre, unrepresentative positions no real game
+    would reach, unlike real opening theory. This is a real methodology
+    flaw, not a one-off -- it means cycles 1-4's conclusions (space x2,
+    outpost x2, null-move) were all tested on the same shaky ground and
+    should be considered UNVERIFIED rather than confirmed, even though
+    they were gated honestly given the tool available at the time.
+**Fix:** Extended `match_regression.c` with real opening-book support
+    (`--book <path>`, reusing the SAN-parsing/book-loading code from the
+    project's own earlier `match_nullmove_book.c` and
+    `match_orig_vs_rewrite.c`): `load_book()`, `tokenize_opening()`,
+    `parse_san()`, a deterministic `shuffle_indices()`, and
+    `book_opening()`. Copied the real book into the project itself
+    (`tools/devloop/openingbook/8moves_v3_movesonly.txt`) so this isn't a
+    one-off borrowed file. Verified the new code compiles clean and
+    produces a correctly-mirrored 5-5 result in a same-vs-same smoke test
+    before trusting it for a real A/B.
+**Re-verification, realistic condition (today's HEAD, which already has
+    eval_endgame_heuristics_enabled=1 from cycle 5, both sides):**
+    - seed 42: `current_wins=15 baseline_wins=15 draws=10` (dead tie)
+    - seed 7: `current_wins=20 baseline_wins=17 draws=3`
+    - seed 123: `current_wins=20 baseline_wins=11 draws=9`
+    Combined across 120 games: current (null-move ON) 55, baseline 43,
+    draws 22. Won 2 of 3 individual matches outright, tied the third --
+    the same bar cycle 5 used to trust its own result.
+**Side investigation (isolating the endgame-heuristics confound):** also
+    ran null-move ON vs OFF with BOTH sides' endgame heuristics forced off
+    (baseline ref 35ba0f6, pre-cycle-5), to check whether the two features
+    interact: seed 42 gave 19-12-9 (null-move clearly ahead), seed 7 gave
+    12-14-14 (null-move slightly behind) -- inconclusive on its own, no
+    stronger a signal than the realistic condition above, so this wasn't
+    pursued further as its own gated change.
+**Comparison to the old project's result:** the old result (47-28-27,
+    confirmed again at 70-41-41 combined across two seeds) is far more
+    lopsided than anything reproduced today (55-43-22). Most likely
+    explanation: `/tmp/searchtest2`'s binary is testing a different,
+    older snapshot of the engine entirely (pre-devloop), not today's code
+    with today's search/eval, so it isn't a clean apples-to-apples replay
+    of the same A/B on the same baseline. Rune's memory of "significant
+    improvement" was correct about the historical result; it doesn't
+    carry over at full strength to the current codebase, but a real,
+    smaller improvement does.
+**Outcome:** CORRECTED. Cycle 4's rejection is overturned. Flipped
+    `null_move_enabled`'s default to 1 in `src/engine/search.c`, with
+    `search.h`'s comment rewritten to record both the original flawed
+    rejection and this correction, honestly, including the discrepancy
+    with the old project's stronger result and the most likely reason for
+    it. Cycles 1-3's rejections (space, both outpost variants) were NOT
+    re-tested with the book-opening harness -- they remain UNVERIFIED,
+    not confirmed, and are worth a second look with the corrected
+    methodology before being fully trusted either way.

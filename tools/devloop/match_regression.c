@@ -7,19 +7,32 @@
 //
 // Modeled directly on this project's earlier match_orig_vs_rewrite.c (see
 // RUNBOOK.md for why that file exists): same equal-node-budget design,
-// same play_game() structure, same win/loss/draw bookkeeping. The main
-// difference is openings: that file drew from a pre-built opening book
-// file that doesn't exist in this checkout, so this version generates its
-// own short random-but-seeded openings instead (see random_opening()) --
-// this is purely for START-POSITION VARIETY so a 40-game match isn't 40
-// repeats of the exact same game; it is NOT an engine heuristic and must
-// never be confused with "hardcoding a move" (RUNBOOK.md's anti-cheating
-// rule is about how ONDSEL ITSELF decides moves during real search, not
-// about how test positions are chosen).
+// same play_game() structure, same win/loss/draw bookkeeping.
+//
+// OPENINGS -- IMPORTANT HISTORY (see tools/devloop/JOURNAL.md's
+// "corrected null-move result" entry): this tool originally only had
+// random_opening() (uniformly-random LEGAL moves from the startpos),
+// written under the mistaken belief that this project's real opening-
+// book file "doesn't exist in this checkout". It does --
+// tools/devloop/openingbook/8moves_v3_movesonly.txt, copied in from this
+// same project's earlier (pre-devloop) search-testing work, is 34,700
+// lines of real, sensible opening theory, exactly what the project's own
+// earlier match_nullmove_book.c used. Uniformly-random legal moves can
+// (and did) produce bizarre, unrepresentative positions that distort a
+// test's result -- confirmed directly: a feature (null-move pruning)
+// that this tool's random-opening mode made look like a clear net loser
+// turned out to be a clear net WINNER once tested with real book
+// openings, reproducing a result from this project's own earlier
+// history. --book <path> (see main()) switches to real book lines,
+// drawn and shuffled the same way match_nullmove_book.c did; without
+// --book, random_opening() is still available as a fallback but should
+// no longer be trusted alone for a real keep/reject decision -- use it
+// only for a quick sanity check during development, not the actual gate.
 //
 // Usage:
 //   match_regression --baseline-ref <git-ref> [--games N] [--node-budget N]
 //                     [--seed N] [--opening-plies N] [--out path.pgn]
+//                     [--book path/to/book_movesonly.txt]
 //                     [--baseline-obj path.o already built by build_baseline.sh]
 //
 // Exit code 0 always (summary is for a human/script to read from stdout);
@@ -174,6 +187,173 @@ static unsigned int rng_next(void) {
     return (unsigned int)(rng_state & 0xffffffffu);
 }
 
+// ---------------------------------------------------------------------------
+// REAL OPENING BOOK support (see the file header comment above for why
+// this was added). Lifted directly from match_nullmove_book.c's own
+// load_book()/tokenize_opening() -- same file format (one line per
+// opening, SAN moves with move numbers, e.g. "1. Nf3 d5 2. g3 c6 ..."),
+// same approach.
+// ---------------------------------------------------------------------------
+#define MAX_BOOK_LINES 40000
+#define MAX_OPENING_PLIES 32
+static char *g_book_lines[MAX_BOOK_LINES];
+static int g_book_n = 0;
+static char g_book_storage[8 * 1024 * 1024];
+static int *g_book_shuffled_idx = NULL;
+
+static void load_book(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) { fprintf(stderr, "match_regression: could not open opening book '%s'\n", path); exit(1); }
+    size_t used = 0;
+    char line[2048];
+    while (fgets(line, sizeof(line), f) && g_book_n < MAX_BOOK_LINES) {
+        size_t len = strlen(line);
+        while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) line[--len] = '\0';
+        if (len == 0) continue;
+        if (used + len + 1 > sizeof(g_book_storage)) { fprintf(stderr, "match_regression: book storage exhausted\n"); break; }
+        memcpy(g_book_storage + used, line, len + 1);
+        g_book_lines[g_book_n++] = g_book_storage + used;
+        used += len + 1;
+    }
+    fclose(f);
+    fprintf(stderr, "Loaded %d opening lines from %s\n", g_book_n, path);
+}
+
+static int tokenize_opening(const char *line, char tokens[][16]) {
+    char buf[2048];
+    strncpy(buf, line, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+    int count = 0;
+    char *tok = strtok(buf, " \t");
+    while (tok && count < MAX_OPENING_PLIES) {
+        char *dot = strchr(tok, '.');
+        if (dot) {
+            int nl = (int)(dot - tok);
+            bool is_num = nl > 0;
+            for (int i = 0; i < nl; i++) if (!isdigit((unsigned char)tok[i])) is_num = false;
+            if (is_num) {
+                char *rest = dot + 1;
+                if (*rest == '\0') { tok = strtok(NULL, " \t"); continue; }
+                tok = rest;
+            }
+        }
+        strncpy(tokens[count], tok, 15);
+        tokens[count][15] = '\0';
+        count++;
+        tok = strtok(NULL, " \t");
+    }
+    return count;
+}
+
+// Parses one SAN token (e.g. "Nf3", "Bxh3", "O-O", "e8=Q+") into the legal
+// Move it refers to in the current position. Same approach as this
+// project's earlier match_orig_vs_rewrite.c parse_san().
+static Move parse_san(Board *b, const char *san_in) {
+    char san[16];
+    strncpy(san, san_in, sizeof(san) - 1);
+    san[sizeof(san) - 1] = '\0';
+    int len = (int)strlen(san);
+    while (len > 0 && (san[len - 1] == '+' || san[len - 1] == '#')) san[--len] = '\0';
+
+    Move candidates[218];
+    int n = legal_moves_now(b, candidates);
+
+    if (strcmp(san, "O-O") == 0) {
+        for (int i = 0; i < n; i++) if (move_flag(candidates[i]) == MOVE_KING_CASTLE) return candidates[i];
+        return 0;
+    }
+    if (strcmp(san, "O-O-O") == 0) {
+        for (int i = 0; i < n; i++) if (move_flag(candidates[i]) == MOVE_QUEEN_CASTLE) return candidates[i];
+        return 0;
+    }
+
+    int promo_piece = 0;
+    char *eq = strchr(san, '=');
+    if (eq) {
+        switch (eq[1]) {
+            case 'N': promo_piece = KNIGHT; break;
+            case 'B': promo_piece = BISHOP; break;
+            case 'R': promo_piece = ROOK; break;
+            case 'Q': promo_piece = QUEEN; break;
+        }
+        *eq = '\0';
+        len = (int)strlen(san);
+    }
+
+    int piece_type = PAWN;
+    int p = 0;
+    if (isupper((unsigned char)san[0])) {
+        switch (san[0]) {
+            case 'N': piece_type = KNIGHT; break;
+            case 'B': piece_type = BISHOP; break;
+            case 'R': piece_type = ROOK; break;
+            case 'Q': piece_type = QUEEN; break;
+            case 'K': piece_type = KING; break;
+        }
+        p = 1;
+    }
+
+    int to_sq = (san[len-2]-'a') + (san[len-1]-'1')*8;
+
+    int disambig_file = -1, disambig_rank = -1;
+    for (int i = p; i < len - 2; i++) {
+        char c = san[i];
+        if (c == 'x') continue;
+        if (c >= 'a' && c <= 'h') disambig_file = c - 'a';
+        else if (c >= '1' && c <= '8') disambig_rank = c - '1';
+    }
+
+    Move found = 0;
+    int found_count = 0;
+    for (int i = 0; i < n; i++) {
+        Move m = candidates[i];
+        int from = move_from(m), to = move_to(m);
+        if (to != to_sq) continue;
+        int8_t piece = b->mailbox[from];
+        int mt = piece > 0 ? piece : -piece;
+        if (mt != piece_type) continue;
+        if (move_is_promotion(m) && promo_piece != 0 && move_promotion_piece_type(m) != promo_piece) continue;
+        if (disambig_file >= 0 && (from % 8) != disambig_file) continue;
+        if (disambig_rank >= 0 && (from / 8) != disambig_rank) continue;
+        found = m;
+        found_count++;
+    }
+    if (found_count != 1) return 0; // ambiguous/unparseable -- caller treats as opening-replay failure
+    return found;
+}
+
+static void shuffle_indices(int *idx, int n, unsigned int seed) {
+    unsigned int state = seed;
+    for (int i = n - 1; i > 0; i--) {
+        state ^= state << 13; state ^= state >> 17; state ^= state << 5;
+        int j = (int)(state % (unsigned)(i + 1));
+        int tmp = idx[i]; idx[i] = idx[j]; idx[j] = tmp;
+    }
+}
+
+// Replays book opening line `book_idx` (an index into g_book_lines) from
+// the startpos via real SAN parsing, same purpose as random_opening() but
+// drawing from real opening theory instead of uniformly-random legal
+// moves. Returns the UCI moves actually played.
+static int book_opening(Board *b, int book_idx, char uci_out[][6]) {
+    board_reset(b);
+    char tokens[MAX_OPENING_PLIES][16];
+    int n_tokens = tokenize_opening(g_book_lines[book_idx], tokens);
+    int played = 0;
+    for (int i = 0; i < n_tokens; i++) {
+        Move m = parse_san(b, tokens[i]);
+        if (m == 0) break; // stop at first unparseable token, play on from here
+        UndoInfo undo;
+        make_move(b, m, &undo);
+        int from = move_from(m), to = move_to(m);
+        char f[3], t[3];
+        square_name(from, f); square_name(to, t);
+        snprintf(uci_out[played], 6, "%s%s", f, t);
+        played++;
+    }
+    return played;
+}
+
 // Plays `n_plies` uniformly-random LEGAL half-moves from the startpos, via
 // CURRENT's own move generator (board-utility use only, see note above).
 // Returns the UCI move list actually played (for the PGN/logging) and
@@ -200,12 +380,17 @@ static int random_opening(Board *b, int n_plies, char uci_out[][6]) {
 }
 
 // result: 1 = current wins, -1 = baseline wins, 0 = draw, 2 = adjudicated/aborted
+// book_idx: when g_book_n > 0 (a --book file was loaded), this is the
+// index into g_book_shuffled_idx to use for a real book opening instead
+// of random_opening(); ignored otherwise.
 static int play_game(int n_opening_plies, unsigned long long opening_seed, bool current_is_white,
-                      long long node_budget, FILE *pgn, int game_no) {
+                      long long node_budget, FILE *pgn, int game_no, int book_idx) {
     Board opening_board;
     rng_state = opening_seed ? opening_seed : 0x9e3779b97f4a7c15ULL;
     char opening_uci[64][6];
-    int opening_plies = random_opening(&opening_board, n_opening_plies, opening_uci);
+    int opening_plies = (g_book_n > 0)
+        ? book_opening(&opening_board, g_book_shuffled_idx[book_idx % g_book_n], opening_uci)
+        : random_opening(&opening_board, n_opening_plies, opening_uci);
 
     Board b;
     board_reset(&b);
@@ -353,6 +538,7 @@ int main(int argc, char **argv) {
     unsigned long long seed = 42;
     int opening_plies = 4;
     const char *out_pgn_path = NULL;
+    const char *book_path = NULL;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--baseline-ref") == 0 && i + 1 < argc) baseline_ref = argv[++i];
@@ -363,6 +549,7 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--current-null-move") == 0) g_current_null_move = 1;
         else if (strcmp(argv[i], "--baseline-null-move") == 0) g_baseline_null_move = 1;
         else if (strcmp(argv[i], "--out") == 0 && i + 1 < argc) out_pgn_path = argv[++i];
+        else if (strcmp(argv[i], "--book") == 0 && i + 1 < argc) book_path = argv[++i];
         else { fprintf(stderr, "unknown arg: %s\n", argv[i]); return 2; }
     }
     (void)baseline_ref; // informational only here; the baseline build itself happens in build_baseline.sh
@@ -371,6 +558,13 @@ int main(int argc, char **argv) {
     zobrist_init();
     old_init_attack_tables();
     old_zobrist_init();
+
+    if (book_path) {
+        load_book(book_path);
+        g_book_shuffled_idx = malloc(sizeof(int) * (size_t)g_book_n);
+        for (int i = 0; i < g_book_n; i++) g_book_shuffled_idx[i] = i;
+        shuffle_indices(g_book_shuffled_idx, g_book_n, (unsigned int)seed);
+    }
 
     FILE *pgn = out_pgn_path ? fopen(out_pgn_path, "w") : NULL;
     if (out_pgn_path && !pgn) { perror("fopen"); return 1; }
@@ -381,7 +575,7 @@ int main(int argc, char **argv) {
         unsigned long long opening_seed = seed + (unsigned long long)i * 2654435761ULL;
         for (int side = 0; side < 2; side++) {
             bool current_is_white = (side == 0);
-            int result = play_game(opening_plies, opening_seed, current_is_white, node_budget, pgn, game_no++);
+            int result = play_game(opening_plies, opening_seed, current_is_white, node_budget, pgn, game_no++, i);
             int current_result = current_is_white ? result : -result;
             if (result == 2) adjudicated++;
             else if (current_result == 1) current_wins++;

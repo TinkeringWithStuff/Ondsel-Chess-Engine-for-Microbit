@@ -74,7 +74,7 @@ static Move killer_move2[KILLER_SLOTS];
 static int history_table[HISTORY_TABLE_SIZE];
 
 long long debug_node_count = 0;
-int null_move_enabled = 0;
+int null_move_enabled = 1;
 int repetition_avoidance_enabled = 1;
 int last_best_score = 0;
 int last_search_depth = 0; // the deepest iterative-deepening depth that fully

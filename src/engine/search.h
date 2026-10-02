@@ -87,21 +87,35 @@ void search_record_move(uint64_t hash_after_move, bool was_irreversible);
 extern int repetition_avoidance_enabled;
 
 // ---------------------------------------------------------------------------
-// NULL-MOVE PRUNING -- OFF by default, same "prove it before shipping it"
-// convention as eval.h's eval_mobility_enabled/eval_endgame_heuristics_enabled.
+// NULL-MOVE PRUNING -- ON by default as of the devloop's methodology
+// correction (see tools/devloop/JOURNAL.md): the first direct regression
+// match (cycle 4, same session) rejected this 10-15, but that match used
+// match_regression.c's random_opening() -- uniformly-random *legal* moves
+// from the start position -- which turned out to produce unrepresentative,
+// often bizarre test positions. Rune's recollection of a real, decisive
+// null-move improvement from earlier project work prompted a re-check with
+// REAL opening-book lines (match_regression.c's new --book support,
+// tools/devloop/openingbook/8moves_v3_movesonly.txt) instead. Under that
+// corrected methodology, three independent 40-game samples (120 games
+// total) against this same baseline (which already has
+// eval_endgame_heuristics_enabled=1) came back 55 wins / 43 losses / 22
+// draws for null-move ON -- won 2 of 3 individual matches outright, tied
+// the third -- the same bar that got endgame heuristics kept. The earlier
+// project's own historical test (a different, older engine snapshot,
+// reproduced directly from /tmp/searchtest2/match_nullmove_book_fixed) saw
+// a far more lopsided 70-41-41 in null-move's favor; that magnitude didn't
+// reproduce here, most likely because that was a different build of the
+// engine entirely rather than an apples-to-apples toggle on today's code.
+// Net conclusion: real, worth keeping, but a modest edge -- not the
+// dramatic one originally remembered.
+//
 // See search.c's own comment above the null-move code itself for what the
 // technique actually does and why it works.
 //
-// IMPORTANT, EASY TO FORGET: this flag lives here and defaults to 0 purely
-// to make a clean, apples-to-apples A/B comparison possible (a host match
-// harness flips it on for one side, off for the other, with everything
-// else identical). Nothing in the actual device firmware
-// (main_play_test.c) currently sets this to 1 -- so even after null-move
-// is proven to help, playing a real game on the micro:bit itself won't
-// benefit from it until something in the real firmware's startup path
-// explicitly turns it on. That's a deliberate, temporary state while the
-// A/B match is still running, not a bug -- but it needs remembering to
-// actually flip once the result is in.
+// Nothing in the actual device firmware (main_play_test.c) overrides this
+// flag, so it now defaults to the proven-better setting there too -- but
+// this has NOT yet been verified on real micro:bit hardware (host build
+// only, same caveat as eval_endgame_heuristics_enabled).
 // ---------------------------------------------------------------------------
 extern int null_move_enabled;
 
