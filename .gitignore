@@ -7,4 +7,13 @@ tools/build_opening_book
 tools/pc_viewer/__pycache__/
 tools/pc_viewer/*.pyc
 tools/devloop/work/
+tools/devloop/__pycache__/
+tools/devloop/play_vs_stockfish
+tools/devloop/replay_position
+tools/devloop/match_regression
 *.pgn
+# NOTE: tools/devloop/stockfish11 (the built Stockfish 11 binary) is
+# intentionally NOT ignored -- it's committed on purpose, see RUNBOOK.md's
+# "why Stockfish 11 is committed as a binary" note. Rebuilding it needs a
+# git clone of the Stockfish source + a C++ build, which is extra unattended
+# risk a fresh overnight session shouldn't have to repeat.
