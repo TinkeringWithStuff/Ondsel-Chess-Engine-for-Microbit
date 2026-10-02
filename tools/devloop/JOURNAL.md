@@ -221,4 +221,60 @@ scheduled task. Cycles below are from that live run (afternoon of
 
 ---
 
-(Entries continue below.)
+## Cycle 3 -- 2026-10-02 (live run)
+
+**Game/divergence:** same as cycle 2's (deliberately -- this cycle is a
+    direct, honest retry of cycle 2's rejected idea with a revised
+    design, not a fresh position).
+**Idea:** Cycle 2's outpost term (any file, OUTPOST_BONUS=25) looked
+    great at the one position but lost its regression match 14-18.
+    Hypothesis from that journal entry: the flat bonus on ANY outpost
+    square (including rim squares with little real scope) might push the
+    search toward trading away real activity just to plant a technically-
+    safe knight. Revised: restricted the bonus to the CENTRAL files only
+    (c-f) and cut the weight from 25 to 10 -- same underlying mechanism
+    (reuses passed_pawn_mask), just more conservative.
+**Position re-test result:** Still correctly signed at the motivating
+    position: eval moved from -10 to -20 (White-relative), about half of
+    the weight-25 version's -10 to -35 move, as expected from halving the
+    weight. Move choice unchanged (still SF's best).
+**Regression match result:** `MATCH_RESULT current_wins=13 baseline_wins=19
+    draws=8 adjudicated=0 total=40` (20 openings x 2 colors, seed 271828,
+    real node budget). FAILS the gate, by an even WORSE margin than cycle
+    2's any-file/weight-25 version (13-19 vs. 14-18) despite being the
+    more conservative change -- so this wasn't a tuning/calibration
+    problem that a smaller weight or a central-files restriction could
+    fix; the different seed makes a direct magnitude comparison noisy,
+    but the direction (still a clear net loser) held up under a second,
+    more careful attempt.
+**Outcome:** REVERTED (`git checkout -- src/engine/`). Knight outposts, as
+    a static positional bonus, don't seem to help THIS engine's overall
+    strength in either tested form, even though the underlying chess
+    principle is sound and real (Stockfish's own eval agreed at the
+    source position). Likely explanation: a flat positional bonus like
+    this can distort move ordering / the search's own judgement in ways
+    that hurt more than the correct per-position signal helps, especially
+    at a fairly shallow effective search depth (the real device node
+    budget, 134638, is small). Not pursuing outpost-style static bonuses
+    further without a fundamentally different implementation (e.g. one
+    that only applies in quiescence/leaf evaluation rather than
+    everywhere, or a much smaller weight tried first before this cycle's
+    two fairly large values) -- moving to a different kind of idea
+    entirely next cycle instead of re-tuning this one a third time.
+
+## Cycle 4 -- 2026-10-02 (live run)
+
+**Idea (not from a fresh position -- a different kind of idea entirely,
+    per cycle 3's note):** search.c already has null-move pruning fully
+    implemented (null_move_enabled, default off) with its own comment
+    saying it's "unproven, run an A/B match" -- exactly the kind of
+    already-built-but-untested feature this project's own convention
+    calls for testing via a direct regression match, same as mobility was
+    checked in cycle 0/1. This is a SEARCH technique (lets the search
+    explore effectively deeper within the same real node budget by
+    skipping a ply when a quick "pass" still looks fine), not a static
+    eval bonus, so it isn't tied to one specific position's eval gap the
+    way the last three cycles were -- its case for being worth testing is
+    that it should make the EXISTING eval's judgement available at
+    greater effective depth, for free, rather than changing what counts
+    as "good" in any position.
