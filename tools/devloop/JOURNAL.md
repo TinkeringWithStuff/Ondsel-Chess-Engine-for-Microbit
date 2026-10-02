@@ -74,4 +74,83 @@ session's own cycles start below.
 
 ---
 
-(Entries start below once the overnight run begins.)
+## Note: the scheduled overnight run never actually started
+
+The scheduled task fired at 2026-10-02 05:14 UTC as planned but finished
+two minutes later with zero commits and no journal entries -- almost
+certainly because a fresh scheduled-task session gets its own separate
+container, and this repo was never pushed to a git remote or other
+persistent location, so the fresh session had nothing to work from. Rune
+caught this in the morning and asked me to just run the loop live instead,
+driving it myself in an interactive session rather than via a detached
+scheduled task. Cycles below are from that live run (afternoon of
+2026-10-02, not actually overnight).
+
+## Cycle 1 -- 2026-10-02 (live run)
+
+**Game:** Ondsel=Black, node budget 134638, sf-depth 10, sf-multipv 3,
+    tools/devloop/work/cycle_1 (gitignored test output)
+**Divergence found:** ply 9 (Black to move), delta -119cp (white-relative:
+    Ondsel +25, Stockfish +144). Position after 1.e4 Nc6 2.d4 d5 3.e5 e6
+    4.Nf3 Bb4 5.c3 (bishop attacked, must move). Ondsel played Ba5 --
+    which, like cycle 0, turned out to be a perfectly reasonable move
+    choice (SF's own #3 at depth 12, and matched SF's #1 choice exactly
+    once SF searched deeper at depth 14/5M nodes). The mismatch was again
+    purely in how good Ondsel thought the resulting POSITION was, not
+    which move to play.
+**Diagnosis:** eval blind spot, not search. replay_position at 5,000,000
+    nodes: Ondsel's move choice became SF's exact top choice, but its own
+    eval only moved from +25 to -30 (White-relative), nowhere near SF's
+    consistent +144/+145/+155-ish range across depths. Confirms (same as
+    cycle 0) that extra search depth does not close this gap -- it's
+    static evaluation, not pruning/ordering.
+**Idea:** Both divergences so far share a pattern: White has a central
+    space advantage (advanced pawns cramping Black) that Ondsel's
+    material+PST+mobility model under-credits. Checked the existing
+    mobility term on this new position directly (static-eval-only probe,
+    no search): only +4cp -- confirms cycle 0's finding that mobility's
+    effect is too small here too, on a second, unrelated position. Wrote
+    a NEW general term instead: SPACE (eval_space_enabled, default off,
+    SPACE_WEIGHT 3) -- counts squares on the central files (c-f) within
+    each side's own camp that are safely controlled (occupied/attacked by
+    that side's own pawn and not attacked by the enemy's), rewarding real
+    territorial gain from advanced central pawns. Modeled on the same idea
+    classical engines (including Stockfish's own pre-NNUE eval) use.
+**Position re-test result:** First version (camp = own half + 1 rank)
+    measured via the static-eval-only probe: only -3cp on EITHER position,
+    and in the WRONG direction on cycle 1 (made Ondsel's eval MORE
+    negative, i.e. further from SF's +144, not closer) -- root cause
+    found by hand-tracing the bitboards: counting a side's untouched
+    HOME-RANK central pawns as "controlled" made the term nearly
+    symmetric between both sides (both still have several untouched
+    central pawns at home), diluting the real signal from genuine pawn
+    advancement. Refined to exclude each side's own back two ranks
+    (ranks 1-2 for White) so only genuine advancement into the center
+    counts. Re-measured: cycle 0 improved slightly (-6cp, right direction,
+    but the real gap there is ~150-180cp -- nowhere near enough). Cycle 1:
+    exactly +0cp -- by hand-tracing again, Black's own d5/e6 pawns turned
+    out to generate almost exactly as many "safely controlled central
+    squares" as White's c3/d4/e5 structure once home-rank pawns were
+    excluded from both sides equally, so the term washes out completely
+    on this position. Conclusion: this specific divergence (and likely
+    cycle 0's too) isn't really about raw pawn-occupied "space" in the
+    square-counting sense -- it's more about PIECE ACTIVITY/TEMPO (a
+    retreating bishop, a knight that's moved 4 times) and possibly
+    long-term king safety, neither of which a pawn-square-counting metric
+    captures. Rejected -- did not pass step 5 on either position it was
+    designed for.
+**Regression match result:** not reached -- idea didn't pass step 5.
+**Outcome:** REVERTED (`git checkout -- src/engine/`). Two independent,
+    reasonably-tried space/mobility formulations have now failed to
+    explain either of the two real divergences found so far. Both
+    divergences involve a piece (knight in cycle 0, bishop in cycle 1)
+    that had to retreat/re-route after being attacked, costing tempo, and
+    a king whose pawn shelter is being probed (h-pawn storm in cycle 0).
+    Next cycle should look at something that measures TEMPO or
+    DEVELOPMENT directly (e.g. a penalty for minor pieces still on their
+    original home square once the other side has castled/developed more),
+    rather than another pawn-structure-only term.
+
+---
+
+(Entries continue below.)
